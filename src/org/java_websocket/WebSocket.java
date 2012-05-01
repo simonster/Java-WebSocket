@@ -56,7 +56,7 @@ public final class WebSocket {
 	public static final int READY_STATE_CLOSING = 2;
 	public static final int READY_STATE_CLOSED = 3;
 
-	public static int BUFFERSIZE = 512;
+	public static int BUFFERSIZE = 4096;
 
 	/**
 	 * The default port of WebSockets, as defined in the spec. If the nullary
@@ -450,10 +450,10 @@ public final class WebSocket {
 	 * @throws InterruptedException
 	 * @throws NotYetConnectedException
 	 */
-	public void send( String text ) throws NotYetConnectedException , InterruptedException {
+	public boolean send( String text ) throws NotYetConnectedException , InterruptedException {
 		if( text == null )
 			throw new IllegalArgumentException( "Cannot send 'null' data to a WebSocket." );
-		send( draft.createFrames( text, role == Role.CLIENT ) );
+		return send( draft.createFrames( text, role == Role.CLIENT ) );
 	}
 
 	/**
@@ -463,28 +463,29 @@ public final class WebSocket {
 	 * @throws InterruptedException
 	 * @throws NotYetConnectedException
 	 */
-	public void send( ByteBuffer bytes ) throws IllegalArgumentException , NotYetConnectedException , InterruptedException {
+	public boolean send( ByteBuffer bytes ) throws IllegalArgumentException , NotYetConnectedException , InterruptedException {
 		if( bytes == null )
 			throw new IllegalArgumentException( "Cannot send 'null' data to a WebSocket." );
-		send( draft.createFrames( bytes, role == Role.CLIENT ) );
+		return send( draft.createFrames( bytes, role == Role.CLIENT ) );
 	}
 
-	public void send( byte[] bytes ) throws IllegalArgumentException , NotYetConnectedException , InterruptedException {
-		send( ByteBuffer.wrap( bytes ) );
+	public boolean send( byte[] bytes ) throws IllegalArgumentException , NotYetConnectedException , InterruptedException {
+		return send( ByteBuffer.wrap( bytes ) );
 	}
 
-	private void send( Collection<Framedata> frames ) throws InterruptedException {
+	private boolean send( Collection<Framedata> frames ) throws InterruptedException {
 		if( !this.handshakeComplete )
 			throw new NotYetConnectedException();
 		for( Framedata f : frames ) {
-			sendFrame( f );
+			if(!sendFrame( f )) return false;
 		}
+		return true;
 	}
 
-	public void sendFrame( Framedata framedata ) throws InterruptedException {
+	public boolean sendFrame( Framedata framedata ) throws InterruptedException {
 		if( DEBUG )
 			System.out.println( "send frame: " + framedata );
-		channelWrite( draft.createBinaryFrame( framedata ) );
+		return channelWrite( draft.createBinaryFrame( framedata ) );
 	}
 
 	private void sendFrameDirect( Framedata framedata ) throws IOException {
@@ -562,25 +563,28 @@ public final class WebSocket {
 		channelWrite( draft.createHandshake( this.handshakerequest, role ) );
 	}
 
-	private void channelWrite( ByteBuffer buf ) throws InterruptedException {
+	private boolean channelWrite( ByteBuffer buf ) throws InterruptedException {
 		if( DEBUG )
 			System.out.println( "write(" + buf.remaining() + "): {" + ( buf.remaining() > 1000 ? "too big to display" : new String( buf.array() ) ) + "}" );
 
 		// add up the number of bytes to the total queued (synchronized over this object)
 		bufferQueueTotalAmount.addAndGet( buf.remaining() );
-
+		
+		// If the buffer is full, don't block; just don't send the packet
 		if( !bufferQueue.offer( buf ) ) {
-			try {
+			return false;
+			/*try {
 				flush();
 			} catch ( IOException e ) {
 				wsl.onWebsocketError( this, e );
 				closeConnection( CloseFrame.ABNROMAL_CLOSE, true );
 				return;
 			}
-			bufferQueue.put( buf );
+			bufferQueue.put( buf );*/
 		}
 
 		wsl.onWriteDemand( this );
+		return true;
 	}
 
 	private void channelWrite( List<ByteBuffer> bufs ) throws InterruptedException {
